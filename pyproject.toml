@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "regional_viz"
+version = "0.1.0"
+description = "PoC for visualizing patient/individual counts per U.S. county from ZIP+4 inputs."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+viz = [
+    "geopandas>=0.14",
+    "mapclassify>=2.6",
+    "matplotlib>=3.7",
+    "plotly>=5.18",
+]
+app = [
+    "streamlit>=1.30",
+    "plotly>=5.18",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "network: requires outbound network (skipped by default in CI without -m network)",
+    "viz: requires the optional viz extras (geopandas/plotly/matplotlib)",
+]
