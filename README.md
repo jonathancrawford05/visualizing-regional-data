@@ -38,6 +38,15 @@ uv run python scripts/generate_demo_data.py       # data/raw/synthetic.csv
 uv run streamlit run app/streamlit_app.py         # interactive choropleth
 ```
 
+> Note: If `uv sync --extra app` fails while downloading `pyarrow` with an
+> `invalid peer certificate: UnknownIssuer` error, try setting a trusted CA
+> bundle first:
+>
+> ```bash
+> export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+> uv sync --extra viz --extra app --extra dev
+> ```
+
 `uv.lock` pins the full transitive tree so the environment reproduces
 exactly. If you'd rather use plain pip + venv, the project is a standard
 PEP 621 package: `pip install -e ".[viz,app,dev]"` from inside a venv
