@@ -58,7 +58,11 @@ def main() -> None:
             zip2fips = seed_dominant_county_map()
             st.success(f"Generated {len(df):,} synthetic ZIP+4 rows.")
         else:
-            up = st.file_uploader("CSV with columns eps_zip, zip4, patients", type="csv")
+            up = st.file_uploader(
+                "CSV with columns eps_zip, zip4, patients",
+                type="csv",
+                help="Streamlit default limit is 200 MB per file; this app raises it to 512 MB via .streamlit/config.toml.",
+            )
             if up is None:
                 st.stop()
             # Same logic as loader.load_zip_counts but from a buffer.
@@ -75,10 +79,40 @@ def main() -> None:
             help="Hot counties otherwise wash out the rest of the map.",
         )
 
+        st.header("Distribution")
+        distribution_mode = st.radio(
+            "Distribution mode",
+            ["Top N counties", "At or above percentile"],
+            index=0,
+            help="Choose whether to show the top N counties by patient count or all counties above a percentile threshold.",
+        )
+        if distribution_mode == "Top N counties":
+            distribution_top_n = st.slider(
+                "Top N counties",
+                10,
+                500,
+                200,
+                step=10,
+                help="Show the top N counties by patient count.",
+            )
+            distribution_percentile = None
+        else:
+            distribution_top_n = None
+            percentile_value = st.slider(
+                "Minimum patient percentile",
+                50,
+                99,
+                90,
+                step=1,
+                format="%d%%",
+                help="Show all counties whose patient count is at or above the selected percentile.",
+            )
+            distribution_percentile = percentile_value / 100
+
     # ---- aggregate ----------------------------------------------------------
     county_df, coverage = aggregate_to_county(df, zip2fips)
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("input rows", f"{len(df):,}")
     c2.metric("counties covered", f"{len(county_df):,}")
     c3.metric(
@@ -87,6 +121,8 @@ def main() -> None:
         delta=f"{coverage.unmapped_zip_count} unmapped ZIPs",
         delta_color="inverse",
     )
+    # New metric: total patients in the input (sum of patients across ZIP+4 rows)
+    c4.metric("total patients", f"{coverage.total_count:,}")
 
     # ---- map ----------------------------------------------------------------
     import plotly.express as px
@@ -109,6 +145,40 @@ def main() -> None:
     # ---- supporting detail --------------------------------------------------
     with st.expander("Top 25 counties"):
         st.dataframe(county_df.head(25), use_container_width=True)
+
+    dist_kwargs: dict[str, int | float | None]
+    if distribution_percentile is not None:
+        min_patients = float(county_df["patients"].quantile(distribution_percentile))
+        dist_kwargs = {"top_n": None, "min_patients": min_patients}
+    else:
+        dist_kwargs = {"top_n": distribution_top_n, "min_patients": None}
+
+    try:
+        from regional_viz.visualize import (
+            distribution_figure,
+            distribution_histogram,
+            distribution_quantiles,
+        )
+
+        with st.expander("Patient distribution by county"):
+            fig = distribution_figure(county_df, **dist_kwargs)
+            st.plotly_chart(fig, use_container_width=True)
+            histogram = distribution_histogram(county_df, min_patients=dist_kwargs["min_patients"])
+            st.plotly_chart(histogram, use_container_width=True)
+            st.write(
+                "**Distribution quantiles**: showing the patient-count quantiles for all counties."
+            )
+            st.dataframe(distribution_quantiles(county_df), use_container_width=True)
+    except Exception:
+        # Optional dependency (plotly) may be missing in some test environments;
+        # fall back to a simple dataframe view of the distribution data.
+        from regional_viz.visualize import distribution_data
+
+        with st.expander("Patient distribution by county"):
+            st.dataframe(
+                distribution_data(county_df, **dist_kwargs).head(200),
+                use_container_width=True,
+            )
     with st.expander("Coverage diagnostics"):
         st.write(
             f"**Total patients in input:** {coverage.total_count:,}\n\n"
