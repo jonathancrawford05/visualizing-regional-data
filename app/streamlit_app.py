@@ -82,7 +82,7 @@ def main() -> None:
     # ---- aggregate ----------------------------------------------------------
     county_df, coverage = aggregate_to_county(df, zip2fips)
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("input rows", f"{len(df):,}")
     c2.metric("counties covered", f"{len(county_df):,}")
     c3.metric(
@@ -91,6 +91,8 @@ def main() -> None:
         delta=f"{coverage.unmapped_zip_count} unmapped ZIPs",
         delta_color="inverse",
     )
+    # New metric: total patients in the input (sum of patients across ZIP+4 rows)
+    c4.metric("total patients", f"{coverage.total_count:,}")
 
     # ---- map ----------------------------------------------------------------
     import plotly.express as px
@@ -113,6 +115,20 @@ def main() -> None:
     # ---- supporting detail --------------------------------------------------
     with st.expander("Top 25 counties"):
         st.dataframe(county_df.head(25), use_container_width=True)
+    # Distribution chart: patients by county (histogram of county counts)
+    try:
+        from regional_viz.visualize import distribution_figure
+
+        with st.expander("Patient distribution by county"):
+            fig = distribution_figure(county_df, top_n=200)
+            st.plotly_chart(fig, use_container_width=True)
+    except Exception:
+        # Optional dependency (plotly) may be missing in some test environments;
+        # fall back to a simple dataframe view of the distribution data.
+        from regional_viz.visualize import distribution_data
+
+        with st.expander("Patient distribution by county"):
+            st.dataframe(distribution_data(county_df).head(200), use_container_width=True)
     with st.expander("Coverage diagnostics"):
         st.write(
             f"**Total patients in input:** {coverage.total_count:,}\n\n"

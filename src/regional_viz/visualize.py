@@ -119,3 +119,30 @@ def render_static(
     plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return out
+
+
+def distribution_data(county_df: pd.DataFrame, *, top_n: int | None = None) -> pd.DataFrame:
+    """Return a DataFrame summarizing patient counts by FIPS, sorted desc.
+
+    If `top_n` is provided, return only the top N rows by `patients`.
+    This is a small helper that unit tests can exercise without requiring
+    an optional plotting dependency.
+    """
+    df = county_df[["fips", "patients"]].groupby("fips", as_index=False).sum()
+    df = df.sort_values("patients", ascending=False).reset_index(drop=True)
+    if top_n is not None:
+        return df.head(top_n)
+    return df
+
+
+def distribution_figure(county_df: pd.DataFrame, *, top_n: int = 100):
+    """Create a Plotly bar figure showing patients by FIPS (top_n).
+
+    Requires `plotly` (optional). Returns a Plotly `Figure`.
+    """
+    import plotly.express as px
+
+    df = distribution_data(county_df, top_n=top_n)
+    fig = px.bar(df, x="fips", y="patients", labels={"patients": "Individuals"})
+    fig.update_layout(title_text=f"Top {len(df)} counties by patients", xaxis_title="FIPS")
+    return fig
