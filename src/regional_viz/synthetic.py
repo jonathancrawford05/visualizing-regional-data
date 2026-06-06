@@ -24,7 +24,8 @@ from regional_viz._seed_zips import SEED_ZIPS
 def generate_synthetic_zip4(
     n_rows: int = 10_000,
     seed: int = 42,
-    zipf_a: float = 1.6,
+    weight_zipf_a: float = 2.5,
+    count_zipf_a: float = 1.6,
     plus4_per_zip: tuple[int, int] = (3, 12),
 ) -> pd.DataFrame:
     """Build a dummy ZIP+4 patient-count frame.
@@ -36,10 +37,15 @@ def generate_synthetic_zip4(
     seed:
         RNG seed for reproducibility — the demo notebook / Streamlit app
         should be deterministic.
-    zipf_a:
-        Shape parameter for the Zipf distribution used to draw patient
-        counts. Higher = heavier tail. 1.6 produces a realistic spread:
-        most ZIPs see 1-5 patients, a few see thousands.
+    weight_zipf_a:
+        Shape parameter for the per-ZIP weighting distribution. Higher
+        values spread row draws across more of the seeded ZIPs; lower
+        values concentrate on a handful. 2.5 lights every seeded ZIP in
+        a 10k-row draw while still producing a Florida-style hotspot.
+    count_zipf_a:
+        Shape parameter for the per-row patient-count distribution.
+        Higher = lighter tail. 1.6 produces a realistic spread: most
+        rows are 1-5 patients, a few are 50.
     plus4_per_zip:
         (min, max) inclusive number of distinct +4 suffixes generated per
         ZIP5. The real data shows most ZIPs split across several +4 rows.
@@ -47,13 +53,17 @@ def generate_synthetic_zip4(
     rng = np.random.default_rng(seed)
     zip5_pool = np.array([z for z, _, _ in SEED_ZIPS])
 
-    # Per-ZIP hotness: a small set of ZIPs is dramatically over-represented.
-    weights = rng.zipf(zipf_a, size=len(zip5_pool)).astype(float)
+    # Per-ZIP hotness: a small set of ZIPs is dramatically over-represented,
+    # but with weight_zipf_a high enough that the long tail still receives
+    # at least a handful of rows. Decoupled from the per-row count shape so
+    # tuning "spread of hotspots" doesn't drag the per-county count
+    # distribution with it.
+    weights = rng.zipf(weight_zipf_a, size=len(zip5_pool)).astype(float)
     weights /= weights.sum()
 
     zips = rng.choice(zip5_pool, size=n_rows, p=weights)
     plus4 = rng.integers(0, 9999, size=n_rows)
-    patients = rng.zipf(zipf_a, size=n_rows).clip(max=50)
+    patients = rng.zipf(count_zipf_a, size=n_rows).clip(max=50)
 
     return pd.DataFrame(
         {

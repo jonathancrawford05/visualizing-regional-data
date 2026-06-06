@@ -40,6 +40,16 @@ def test_geographic_coverage_includes_many_states():
     assert state_prefixes >= 30
 
 
+def test_most_seeded_zips_are_lit_in_a_typical_run():
+    """A 10k-row draw should exercise most of the seed pool, not collapse
+    onto a handful of hotspots. Catches future regressions in the
+    weighting distribution (the per-ZIP Zipf shape is sharp enough that a
+    careless tweak silently flattens the choropleth)."""
+    df = generate_synthetic_zip4(n_rows=10_000, seed=0)
+    share_lit = df["eps_zip"].nunique() / len(SEED_ZIPS)
+    assert share_lit >= 0.80, f"only {share_lit:.0%} of seeded ZIPs received any rows"
+
+
 def test_count_distribution_is_skewed():
     """Real data has a Florida/NY/NJ skew. Generator should mimic that —
     the top decile of rows should carry the majority of patients."""
