@@ -48,7 +48,10 @@ uv run streamlit run app/streamlit_app.py         # interactive choropleth
 > ```
 
 `uv.lock` pins the full transitive tree so the environment reproduces
-exactly. If you'd rather use plain pip + venv, the project is a standard
+exactly. This app also raises Streamlit's default 200 MB upload cap to 512 MB
+via `.streamlit/config.toml`.
+
+If you'd rather use plain pip + venv, the project is a standard
 PEP 621 package: `pip install -e ".[viz,app,dev]"` from inside a venv
 also works (no lockfile, but otherwise equivalent).
 

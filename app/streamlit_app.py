@@ -58,7 +58,11 @@ def main() -> None:
             zip2fips = seed_dominant_county_map()
             st.success(f"Generated {len(df):,} synthetic ZIP+4 rows.")
         else:
-            up = st.file_uploader("CSV with columns eps_zip, zip4, patients", type="csv")
+            up = st.file_uploader(
+                "CSV with columns eps_zip, zip4, patients",
+                type="csv",
+                help="Streamlit default limit is 200 MB per file; this app raises it to 512 MB via .streamlit/config.toml.",
+            )
             if up is None:
                 st.stop()
             # Same logic as loader.load_zip_counts but from a buffer.
