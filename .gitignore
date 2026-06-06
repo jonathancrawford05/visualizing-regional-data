@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+.venv/
+venv/
+.env
+.DS_Store
+
+# Generated artifacts (keep examples in docs, not these)
+data/raw/
+data/processed/
+outputs/*.html
+outputs/*.png
+!outputs/.gitkeep
+
+# Notebook outputs (committed clean)
+notebooks/*.ipynb_checkpoints
