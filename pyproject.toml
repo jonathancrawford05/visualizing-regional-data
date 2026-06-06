@@ -27,6 +27,7 @@ app = [
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
+    "plotly>=5.18",
 ]
 
 [tool.setuptools.packages.find]

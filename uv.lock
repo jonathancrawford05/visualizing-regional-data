@@ -1889,6 +1889,7 @@ app = [
     { name = "streamlit" },
 ]
 dev = [
+    { name = "plotly" },
     { name = "pytest" },
     { name = "pytest-cov" },
 ]
@@ -1908,6 +1909,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.24" },
     { name = "pandas", specifier = ">=2.0" },
     { name = "plotly", marker = "extra == 'app'", specifier = ">=5.18" },
+    { name = "plotly", marker = "extra == 'dev'", specifier = ">=5.18" },
     { name = "plotly", marker = "extra == 'viz'", specifier = ">=5.18" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1" },
