@@ -32,11 +32,16 @@ loop so we can iterate on three open questions before locking the design:
 ## Quick start
 
 ```bash
-pip install -e ".[viz,app,dev]"
-pytest                                           # 24 tests, all offline
-python scripts/generate_demo_data.py             # data/raw/synthetic.csv
-streamlit run app/streamlit_app.py               # interactive choropleth
+uv sync --extra viz --extra app --extra dev       # installs from uv.lock
+uv run pytest                                     # 24 tests, all offline
+uv run python scripts/generate_demo_data.py       # data/raw/synthetic.csv
+uv run streamlit run app/streamlit_app.py         # interactive choropleth
 ```
+
+`uv.lock` pins the full transitive tree so the environment reproduces
+exactly. If you'd rather use plain pip + venv, the project is a standard
+PEP 621 package: `pip install -e ".[viz,app,dev]"` from inside a venv
+also works (no lockfile, but otherwise equivalent).
 
 See [`docs/quickstart.md`](docs/quickstart.md) for the longer version and
 [`docs/design-decisions.md`](docs/design-decisions.md) for the *why*.

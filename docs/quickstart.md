@@ -2,6 +2,17 @@
 
 ## Install
 
+Recommended path uses [uv](https://docs.astral.sh/uv/) — one tool for
+both the virtualenv and the installer, and `uv.lock` reproduces the
+exact dependency tree:
+
+```bash
+# install uv once, then:
+uv sync --extra viz --extra app --extra dev
+```
+
+Pip alternative (no lockfile but otherwise equivalent):
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[viz,app,dev]"
@@ -15,7 +26,7 @@ Optional extras:
 ## Run the tests
 
 ```bash
-pytest
+uv run pytest        # or just `pytest` inside an activated venv
 ```
 
 All 24 tests should pass in under a second. None of them touch the network.
@@ -23,7 +34,7 @@ All 24 tests should pass in under a second. None of them touch the network.
 ## Generate demo data
 
 ```bash
-python scripts/generate_demo_data.py --rows 10000 --seed 42
+uv run python scripts/generate_demo_data.py --rows 10000 --seed 42
 # wrote 10,000 rows -> data/raw/synthetic.csv
 ```
 
@@ -35,7 +46,7 @@ from every U.S. state plus DC.
 ## Run the Streamlit dashboard
 
 ```bash
-streamlit run app/streamlit_app.py
+uv run streamlit run app/streamlit_app.py
 ```
 
 The sidebar lets you:
