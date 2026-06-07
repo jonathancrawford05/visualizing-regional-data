@@ -21,6 +21,21 @@ PLOTLY_COUNTIES_URL = (
 )
 NON_CONUS_STATE_PREFIXES = frozenset({"02", "15", "60", "66", "69", "72", "78"})
 
+STATE_FIPS_TO_ABBR: dict[str, str] = {
+    "01": "AL", "02": "AK", "04": "AZ", "05": "AR", "06": "CA",
+    "08": "CO", "09": "CT", "10": "DE", "11": "DC", "12": "FL",
+    "13": "GA", "15": "HI", "16": "ID", "17": "IL", "18": "IN",
+    "19": "IA", "20": "KS", "21": "KY", "22": "LA", "23": "ME",
+    "24": "MD", "25": "MA", "26": "MI", "27": "MN", "28": "MS",
+    "29": "MO", "30": "MT", "31": "NE", "32": "NV", "33": "NH",
+    "34": "NJ", "35": "NM", "36": "NY", "37": "NC", "38": "ND",
+    "39": "OH", "40": "OK", "41": "OR", "42": "PA", "44": "RI",
+    "45": "SC", "46": "SD", "47": "TN", "48": "TX", "49": "UT",
+    "50": "VT", "51": "VA", "53": "WA", "54": "WV", "55": "WI",
+    "56": "WY", "60": "AS", "66": "GU", "69": "MP", "72": "PR",
+    "78": "VI",
+}
+
 
 def _load_geojson(source: str | Path) -> dict:
     """Load a GeoJSON from a URL or local file."""
@@ -122,23 +137,60 @@ def render_static(
     return out
 
 
+def fips_to_county_name(geojson: dict) -> dict[str, tuple[str, str]]:
+    """Extract ``{fips: (county_name, state_abbr)}`` from a counties GeoJSON dict.
+
+    Expects the Plotly / Census TIGER GeoJSON where each feature has an ``id``
+    equal to the 5-digit FIPS and ``properties.NAME`` / ``properties.STATE``.
+    Unknown state FIPS fall back to the raw 2-digit prefix string.
+    """
+    result: dict[str, tuple[str, str]] = {}
+    for feature in geojson.get("features", []):
+        fips = feature.get("id", "")
+        props = feature.get("properties", {})
+        name = props.get("NAME", "")
+        state_fips = props.get("STATE", fips[:2] if len(fips) >= 2 else "")
+        abbr = STATE_FIPS_TO_ABBR.get(state_fips, state_fips)
+        result[fips] = (name, abbr)
+    return result
+
+
+def filter_county_df_by_percentile(
+    county_df: pd.DataFrame,
+    min_percentile: float,
+) -> pd.DataFrame:
+    """Return counties whose patient count is at or above *min_percentile*.
+
+    *min_percentile* is a fraction in [0.0, 1.0].  0.0 returns all rows
+    unchanged; 1.0 returns only counties at or above the maximum value.
+    """
+    if min_percentile <= 0.0:
+        return county_df
+    threshold = float(county_df["patients"].quantile(min_percentile))
+    return county_df[county_df["patients"] >= threshold].reset_index(drop=True)
+
+
 def distribution_data(
     county_df: pd.DataFrame,
     *,
     top_n: int | None = None,
     min_patients: float | None = None,
+    county_names: dict[str, tuple[str, str]] | None = None,
 ) -> pd.DataFrame:
     """Return a DataFrame summarizing patient counts by FIPS, sorted desc.
 
-    If `min_patients` is provided, filter out counties below that threshold.
-    If `top_n` is provided, return only the top N rows by `patients`.
-    This is a small helper that unit tests can exercise without requiring
-    an optional plotting dependency.
+    If *min_patients* is provided, filter out counties below that threshold.
+    If *top_n* is provided, return only the top N rows by ``patients``.
+    If *county_names* is provided (mapping FIPS → (name, state_abbr)),
+    ``county`` and ``state`` columns are added to the output.
     """
     df = county_df[["fips", "patients"]].groupby("fips", as_index=False).sum()
     df = df.sort_values("patients", ascending=False).reset_index(drop=True)
     if min_patients is not None:
         df = df[df["patients"] >= min_patients].reset_index(drop=True)
+    if county_names is not None:
+        df["county"] = df["fips"].map(lambda f: county_names.get(f, ("", ""))[0])
+        df["state"] = df["fips"].map(lambda f: county_names.get(f, ("", ""))[1])
     if top_n is not None:
         return df.head(top_n)
     return df
@@ -149,19 +201,33 @@ def distribution_figure(
     *,
     top_n: int | None = 100,
     min_patients: float | None = None,
+    county_names: dict[str, tuple[str, str]] | None = None,
 ):
     """Create a Plotly bar figure showing patients by FIPS.
 
-    Requires `plotly` (optional). Returns a Plotly `Figure`.
+    Requires ``plotly`` (optional). Returns a Plotly ``Figure``.
+    When *county_names* is provided, x-axis labels show "County, ST" instead
+    of raw FIPS codes.
     """
     import plotly.express as px
 
-    df = distribution_data(county_df, top_n=top_n, min_patients=min_patients)
-    fig = px.bar(df, x="fips", y="patients", labels={"patients": "Individuals"})
+    df = distribution_data(
+        county_df, top_n=top_n, min_patients=min_patients, county_names=county_names
+    )
+    if county_names is not None and "county" in df.columns:
+        df = df.copy()
+        df["label"] = df["county"] + ", " + df["state"]
+        x_col = "label"
+        xaxis_title = "County"
+    else:
+        x_col = "fips"
+        xaxis_title = "FIPS"
+
+    fig = px.bar(df, x=x_col, y="patients", labels={"patients": "Individuals"})
     subtitle = "Top counties by patients"
     if min_patients is not None:
         subtitle = f"Counties with ≥ {min_patients:.0f} patients"
-    fig.update_layout(title_text=subtitle, xaxis_title="FIPS")
+    fig.update_layout(title_text=subtitle, xaxis_title=xaxis_title)
     return fig
 
 
