@@ -5,8 +5,8 @@ Run with::
     streamlit run app/streamlit_app.py
 
 The sidebar lets stakeholders toggle between dummy data and a real upload,
-swap binning schemes, and inspect the coverage report — the iteration knobs
-we expect to argue about before locking the final pipeline.
+apply a global patient-percentile filter (affects map and all charts),
+adjust colour-range clipping, and control the distribution bar chart.
 """
 from __future__ import annotations
 
@@ -21,7 +21,11 @@ import streamlit as st
 from regional_viz.aggregate import aggregate_to_county
 from regional_viz.loader import load_zip_counts
 from regional_viz.synthetic import generate_synthetic_zip4, seed_dominant_county_map
-from regional_viz.visualize import PLOTLY_COUNTIES_URL
+from regional_viz.visualize import (
+    PLOTLY_COUNTIES_URL,
+    filter_county_df_by_percentile,
+    fips_to_county_name,
+)
 
 
 @st.cache_data(show_spinner="Fetching county GeoJSON…")
@@ -44,7 +48,8 @@ def main() -> None:
     )
 
     with st.sidebar:
-        st.header("Inputs")
+        # ---- Data source ---------------------------------------------------
+        st.header("Data")
         source = st.radio(
             "Data source",
             ["Synthetic (dummy)", "Upload CSV"],
@@ -65,7 +70,6 @@ def main() -> None:
             )
             if up is None:
                 st.stop()
-            # Same logic as loader.load_zip_counts but from a buffer.
             raw = pd.read_csv(io.BytesIO(up.getvalue()), dtype={"eps_zip": str})
             raw["eps_zip"] = raw["eps_zip"].str.zfill(5)
             raw["patients"] = raw["patients"].astype(int)
@@ -73,85 +77,118 @@ def main() -> None:
             with st.spinner("Loading public ZIP→FIPS crosswalk…"):
                 zip2fips = load_public_zip2fips()
 
-        st.header("Display")
+        # ---- Global filters ------------------------------------------------
+        st.header("Filters")
+        st.info(
+            "These filters apply to **all** dashboard components — the map, "
+            "distribution charts, and summary metrics.",
+            icon="ℹ️",
+        )
+        min_percentile_pct = st.slider(
+            "Minimum patient percentile",
+            min_value=0,
+            max_value=100,
+            value=0,
+            step=1,
+            format="%d%%",
+            help=(
+                "Exclude counties whose patient count falls below this percentile. "
+                "**0% = include all data** (default). "
+                "50% = top half of counties by patient count. "
+                "99% = only the very highest-count counties."
+            ),
+        )
+        min_percentile = min_percentile_pct / 100.0
+
+        # ---- Map display ---------------------------------------------------
+        st.header("Map display")
         clip_q = st.slider(
-            "color-range clip quantile", 0.80, 1.00, 0.97, step=0.01,
-            help="Hot counties otherwise wash out the rest of the map.",
+            "Colour-range clip quantile",
+            0.80,
+            1.00,
+            0.97,
+            step=0.01,
+            help=(
+                "Clips the top of the colour scale at this quantile of the "
+                "filtered data, preventing a few very high-count counties from "
+                "washing out the rest of the map."
+            ),
         )
 
-        st.header("Distribution")
+        # ---- Distribution display ------------------------------------------
+        st.header("Distribution chart")
         distribution_mode = st.radio(
-            "Distribution mode",
-            ["Top N counties", "At or above percentile"],
+            "Show in bar chart",
+            ["Top N counties", "All filtered counties"],
             index=0,
-            help="Choose whether to show the top N counties by patient count or all counties above a percentile threshold.",
+            help=(
+                "**Top N counties** limits the bar chart to the N highest-count "
+                "counties in the filtered data. "
+                "**All filtered counties** shows every county that passes the "
+                "percentile filter above."
+            ),
         )
         if distribution_mode == "Top N counties":
             distribution_top_n = st.slider(
-                "Top N counties",
+                "Top N",
                 10,
                 500,
                 200,
                 step=10,
-                help="Show the top N counties by patient count.",
+                help="Number of counties to display in the bar chart.",
             )
-            distribution_percentile = None
         else:
             distribution_top_n = None
-            percentile_value = st.slider(
-                "Minimum patient percentile",
-                50,
-                99,
-                90,
-                step=1,
-                format="%d%%",
-                help="Show all counties whose patient count is at or above the selected percentile.",
-            )
-            distribution_percentile = percentile_value / 100
 
-    # ---- aggregate ----------------------------------------------------------
-    county_df, coverage = aggregate_to_county(df, zip2fips)
+    # ---- Aggregate ---------------------------------------------------------
+    county_df_full, coverage = aggregate_to_county(df, zip2fips)
 
+    # Apply global percentile filter to all downstream components
+    county_df = filter_county_df_by_percentile(county_df_full, min_percentile)
+
+    # ---- Metrics -----------------------------------------------------------
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("input rows", f"{len(df):,}")
-    c2.metric("counties covered", f"{len(county_df):,}")
+    c1.metric("Input rows", f"{len(df):,}")
+    c2.metric(
+        "Counties shown",
+        f"{len(county_df):,}",
+        delta=f"of {len(county_df_full):,} total" if min_percentile > 0 else None,
+    )
     c3.metric(
-        "patient coverage",
+        "Patient coverage",
         f"{coverage.coverage_ratio:.1%}",
         delta=f"{coverage.unmapped_zip_count} unmapped ZIPs",
         delta_color="inverse",
     )
-    # New metric: total patients in the input (sum of patients across ZIP+4 rows)
-    c4.metric("total patients", f"{coverage.total_count:,}")
+    c4.metric("Total patients", f"{coverage.total_count:,}")
 
-    # ---- map ----------------------------------------------------------------
+    # ---- Map ---------------------------------------------------------------
     import plotly.express as px
-    geo = load_counties_geojson()
-    range_max = float(county_df["patients"].quantile(clip_q)) or 1.0
-    fig = px.choropleth(
-        county_df,
-        geojson=geo,
-        locations="fips",
-        color="patients",
-        color_continuous_scale="Viridis",
-        range_color=(0, range_max),
-        scope="usa",
-        labels={"patients": "Individuals"},
-        hover_data={"fips": True, "patients": ":,"},
-    )
-    fig.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=600)
-    st.plotly_chart(fig, use_container_width=True)
 
-    # ---- supporting detail --------------------------------------------------
+    geo = load_counties_geojson()
+    county_names = fips_to_county_name(geo)
+
+    if county_df.empty:
+        st.warning("No counties remain after applying the current filter. Lower the percentile to see data.")
+    else:
+        range_max = float(county_df["patients"].quantile(clip_q)) or 1.0
+        map_fig = px.choropleth(
+            county_df,
+            geojson=geo,
+            locations="fips",
+            color="patients",
+            color_continuous_scale="Viridis",
+            range_color=(0, range_max),
+            scope="usa",
+            labels={"patients": "Individuals"},
+            hover_data={"fips": True, "patients": ":,"},
+        )
+        map_fig.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=600)
+        st.plotly_chart(map_fig, use_container_width=True)
+
+    # ---- Supporting detail -------------------------------------------------
     with st.expander("Top 25 counties"):
         st.dataframe(county_df.head(25), use_container_width=True)
-
-    dist_kwargs: dict[str, int | float | None]
-    if distribution_percentile is not None:
-        min_patients = float(county_df["patients"].quantile(distribution_percentile))
-        dist_kwargs = {"top_n": None, "min_patients": min_patients}
-    else:
-        dist_kwargs = {"top_n": distribution_top_n, "min_patients": None}
 
     try:
         from regional_viz.visualize import (
@@ -161,24 +198,34 @@ def main() -> None:
         )
 
         with st.expander("Patient distribution by county"):
-            fig = distribution_figure(county_df, **dist_kwargs)
-            st.plotly_chart(fig, use_container_width=True)
-            histogram = distribution_histogram(county_df, min_patients=dist_kwargs["min_patients"])
+            bar_fig = distribution_figure(
+                county_df,
+                top_n=distribution_top_n,
+                county_names=county_names,
+            )
+            st.plotly_chart(bar_fig, use_container_width=True)
+
+            histogram = distribution_histogram(county_df)
             st.plotly_chart(histogram, use_container_width=True)
+
             st.write(
-                "**Distribution quantiles**: showing the patient-count quantiles for all counties."
+                "**Distribution quantiles** — patient-count percentiles across filtered counties."
             )
             st.dataframe(distribution_quantiles(county_df), use_container_width=True)
+
     except Exception:
-        # Optional dependency (plotly) may be missing in some test environments;
-        # fall back to a simple dataframe view of the distribution data.
         from regional_viz.visualize import distribution_data
 
         with st.expander("Patient distribution by county"):
             st.dataframe(
-                distribution_data(county_df, **dist_kwargs).head(200),
+                distribution_data(
+                    county_df,
+                    top_n=distribution_top_n,
+                    county_names=county_names,
+                ).head(200),
                 use_container_width=True,
             )
+
     with st.expander("Coverage diagnostics"):
         st.write(
             f"**Total patients in input:** {coverage.total_count:,}\n\n"
