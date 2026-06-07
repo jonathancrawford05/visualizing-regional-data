@@ -188,7 +188,10 @@ def main() -> None:
 
     # ---- Supporting detail -------------------------------------------------
     with st.expander("Top 25 counties"):
-        st.dataframe(county_df.head(25), use_container_width=True)
+        top25 = county_df.head(25).copy()
+        top25.insert(1, "county", top25["fips"].map(lambda f: county_names.get(f, ("", ""))[0]))
+        top25.insert(2, "state", top25["fips"].map(lambda f: county_names.get(f, ("", ""))[1]))
+        st.dataframe(top25, use_container_width=True)
 
     try:
         from regional_viz.visualize import (
