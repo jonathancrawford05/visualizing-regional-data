@@ -84,6 +84,23 @@ def main() -> None:
             "distribution charts, and summary metrics.",
             icon="ℹ️",
         )
+
+        # ZIP+4 cluster group filter (optional column)
+        selected_cluster_groups = None
+        if "zip4_cluster_group" in df.columns:
+            unique_groups = sorted(df["zip4_cluster_group"].dropna().unique())
+            if len(unique_groups) > 0:
+                selected_cluster_groups = st.multiselect(
+                    "ZIP+4 cluster groups",
+                    options=unique_groups,
+                    default=None,
+                    help=(
+                        "Filter data to specific ZIP+4 cluster groups. "
+                        "Leave empty to include all groups. "
+                        "Select one or more groups to filter the data."
+                    ),
+                )
+
         min_percentile_pct = st.slider(
             "Minimum patient percentile",
             min_value=0,
@@ -140,15 +157,28 @@ def main() -> None:
         else:
             distribution_top_n = None
 
+    # ---- Apply global filters at input level -------------------------------
+    # Filter by zip4_cluster_group before aggregation (if column exists and selections made)
+    df_filtered = df.copy()
+    if selected_cluster_groups and len(selected_cluster_groups) > 0:
+        df_filtered = df_filtered[df_filtered["zip4_cluster_group"].isin(selected_cluster_groups)]
+
     # ---- Aggregate ---------------------------------------------------------
-    county_df_full, coverage = aggregate_to_county(df, zip2fips)
+    county_df_full, coverage = aggregate_to_county(df_filtered, zip2fips)
 
     # Apply global percentile filter to all downstream components
     county_df = filter_county_df_by_percentile(county_df_full, min_percentile)
 
     # ---- Metrics -----------------------------------------------------------
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Input rows", f"{len(df):,}")
+
+    # Show input rows with indicator if cluster filter is active
+    input_rows_label = "Input rows"
+    input_rows_delta = None
+    if selected_cluster_groups and len(selected_cluster_groups) > 0:
+        input_rows_delta = f"{len(df_filtered):,} after cluster filter"
+
+    c1.metric(input_rows_label, f"{len(df):,}", delta=input_rows_delta)
     c2.metric(
         "Counties shown",
         f"{len(county_df):,}",

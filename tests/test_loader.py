@@ -42,3 +42,21 @@ def test_load_zip_counts_raises_on_bad_schema(tmp_path):
     p.write_text("postal_code,count\n10001,1\n")
     with pytest.raises(SchemaError):
         load_zip_counts(p)
+
+
+def test_load_zip_counts_accepts_optional_zip4_cluster_group(tmp_path):
+    """The zip4_cluster_group column is optional for backward compatibility."""
+    p = tmp_path / "with_cluster.csv"
+    p.write_text("eps_zip,zip4,patients,zip4_cluster_group\n06103,1234,7,GroupA\n10001,5555,3,GroupB\n")
+    df = load_zip_counts(p)
+    assert "zip4_cluster_group" in df.columns
+    assert df["zip4_cluster_group"].tolist() == ["GroupA", "GroupB"]
+
+
+def test_load_zip_counts_works_without_zip4_cluster_group(tmp_path):
+    """CSVs without zip4_cluster_group column should still load (backward compatibility)."""
+    p = tmp_path / "no_cluster.csv"
+    p.write_text("eps_zip,zip4,patients\n06103,1234,7\n10001,5555,3\n")
+    df = load_zip_counts(p)
+    assert "zip4_cluster_group" not in df.columns
+    assert len(df) == 2

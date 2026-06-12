@@ -36,6 +36,10 @@ def load_zip_counts(
     Returns a frame with `zip_col` zero-padded to 5 digits and `count_col`
     coerced to integer. The `zip4` suffix column (if present) is preserved
     but unused downstream — it does not help county rollup.
+
+    Optional columns:
+      * `zip4_cluster_group` — cluster assignment for ZIP+4 combinations.
+        If present, can be used for filtering in the dashboard.
     """
     df = pd.read_csv(path, dtype={zip_col: str})
     validate_schema(df, required=(zip_col, count_col))
