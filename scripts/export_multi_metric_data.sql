@@ -25,23 +25,19 @@
 --   - AGE_CUTOFF_YEAR: Birth year for 55+ filter (≤1960 for 55+ in study period)
 --   - PROXIMITY_MONTHS: Cancer attribution window (12 months recommended)
 
-DECLARE COHORT_ID INT DEFAULT 4;
-DECLARE CALENDAR_YEAR INT DEFAULT 2023;
-DECLARE AGE_55_PLUS_CUTOFF_YEAR INT DEFAULT 1960;
-DECLARE PROXIMITY_WINDOW_MONTHS INT DEFAULT 12;
+DECLARE OR REPLACE VARIABLE COHORT_ID INT DEFAULT 4;
+DECLARE OR REPLACE VARIABLE CALENDAR_YEAR INT DEFAULT 2023;
+DECLARE OR REPLACE VARIABLE AGE_55_PLUS_CUTOFF_YEAR INT DEFAULT 1960;
+DECLARE OR REPLACE VARIABLE PROXIMITY_WINDOW_MONTHS INT DEFAULT 12;
 
 -- ── Base Tables ─────────────────────────────────────────────────────────────
--- Catalog and schema
-SET CATALOG = 'prod_marc_ia_projects';
-SET SCHEMA = 'kythera_data_silver';
-
--- Table references
--- ${CATALOG}.${SCHEMA}.kythera_cohorts_option_a           -- Cohort membership
--- ${CATALOG}.${SCHEMA}.kythera_epsilon_23_old_age        -- Consumer database (geographic)
--- ${CATALOG}.${SCHEMA}.cv_zip_4_mapping                  -- ZIP+4 cluster groups
--- ${CATALOG}.${SCHEMA}.cancer_analysis_per_life_year_claims_unfiltered  -- Cancer claims
--- ${CATALOG}.${SCHEMA}.kythera_veritas_april_2026        -- Death records
--- ${CATALOG}.${SCHEMA}.kythera_gender_yob                -- Demographics
+-- Table references (fully qualified)
+-- prod_marc_ia_projects.kythera_data_silver.kythera_cohorts_option_a           -- Cohort membership
+-- prod_marc_ia_projects.kythera_data_silver.kythera_epsilon_23_old_age        -- Consumer database (geographic)
+-- prod_marc_ia_projects.kythera_data_silver.cv_zip_4_mapping                  -- ZIP+4 cluster groups
+-- prod_marc_ia_projects.kythera_data_silver.cancer_analysis_per_life_year_claims_unfiltered  -- Cancer claims
+-- prod_marc_ia_projects.kythera_data_silver.kythera_veritas_april_2026        -- Death records
+-- prod_marc_ia_projects.kythera_data_silver.kythera_gender_yob                -- Demographics
 
 -- ── Step 1: ZIP+4 Cluster Mapping ───────────────────────────────────────────
 WITH cluster_mapping AS (
@@ -49,7 +45,7 @@ WITH cluster_mapping AS (
     SPLIT(`Zipcode+4`, '-')[0] AS eps_zip,
     SPLIT(`Zipcode+4`, '-')[1] AS zip4,
     glm AS zip4_cluster_group
-  FROM ${CATALOG}.${SCHEMA}.cv_zip_4_mapping
+  FROM prod_marc_ia_projects.kythera_data_silver.cv_zip_4_mapping
 ),
 
 -- ── Step 2: Patient-Level Cancer History ───────────────────────────────────
@@ -58,7 +54,7 @@ cancer_patients AS (
   SELECT
     id AS patient_id,
     MIN(abs_first_cancer_date) AS patient_first_cancer_date
-  FROM ${CATALOG}.${SCHEMA}.cancer_analysis_per_life_year_claims_unfiltered
+  FROM prod_marc_ia_projects.kythera_data_silver.cancer_analysis_per_life_year_claims_unfiltered
   WHERE cancer_site_category IS NOT NULL
   GROUP BY id
 ),
@@ -79,7 +75,7 @@ last_cancer_claim AS (
   SELECT
     id AS patient_id,
     MAX(abs_last_cancer_date) AS last_cancer_date
-  FROM ${CATALOG}.${SCHEMA}.cancer_analysis_per_life_year_claims_unfiltered
+  FROM prod_marc_ia_projects.kythera_data_silver.cancer_analysis_per_life_year_claims_unfiltered
   WHERE cancer_site_category IS NOT NULL
   GROUP BY id
 ),
@@ -91,7 +87,7 @@ deaths_this_year AS (
     TO_DATE(dod) AS death_date,
     death_year,
     age_at_death
-  FROM ${CATALOG}.${SCHEMA}.kythera_veritas_april_2026
+  FROM prod_marc_ia_projects.kythera_data_silver.kythera_veritas_april_2026
   WHERE death_year = CALENDAR_YEAR
 ),
 
@@ -120,7 +116,7 @@ demographics_55plus AS (
     patient_id,
     patient_gender AS gender,
     patient_birth_year AS yob
-  FROM ${CATALOG}.${SCHEMA}.kythera_gender_yob
+  FROM prod_marc_ia_projects.kythera_data_silver.kythera_gender_yob
   WHERE patient_birth_year <= AGE_55_PLUS_CUTOFF_YEAR
 ),
 
@@ -134,9 +130,9 @@ cohort_epsilon_metrics AS (
     COALESCE(cancer.has_cancer_history, 0) AS has_cancer_history,
     CASE WHEN deaths.patient_id IS NOT NULL THEN 1 ELSE 0 END AS died_this_year,
     COALESCE(ca_deaths.cancer_attributed_flag, 0) AS cancer_attributed
-  FROM ${CATALOG}.${SCHEMA}.kythera_cohorts_option_a cohort
+  FROM prod_marc_ia_projects.kythera_data_silver.kythera_cohorts_option_a cohort
   -- Join Epsilon (geographic data) - INNER join = Epsilon-matched only
-  INNER JOIN ${CATALOG}.${SCHEMA}.kythera_epsilon_23_old_age eps
+  INNER JOIN prod_marc_ia_projects.kythera_data_silver.kythera_epsilon_23_old_age eps
     ON cohort.patient_id = eps.patient_id
   -- Join demographics (55+ filter)
   INNER JOIN demographics_55plus demog
@@ -167,9 +163,9 @@ SELECT
   zip4,
   zip4_cluster_group,
   COUNT(DISTINCT patient_id) AS patients,
-  SUM(has_cancer_history) AS cancer_prevalence_numerator,
-  SUM(died_this_year) AS all_cause_deaths,
-  SUM(cancer_attributed) AS cancer_deaths
+  COUNT(DISTINCT CASE WHEN has_cancer_history = 1 THEN patient_id END) AS cancer_prevalence_numerator,
+  COUNT(DISTINCT CASE WHEN died_this_year = 1 THEN patient_id END) AS all_cause_deaths,
+  COUNT(DISTINCT CASE WHEN cancer_attributed = 1 THEN patient_id END) AS cancer_deaths
 FROM cohort_epsilon_metrics
 GROUP BY eps_zip, zip4, zip4_cluster_group
 ORDER BY patients DESC;
