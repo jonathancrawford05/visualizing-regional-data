@@ -60,3 +60,44 @@ def test_load_zip_counts_works_without_zip4_cluster_group(tmp_path):
     df = load_zip_counts(p)
     assert "zip4_cluster_group" not in df.columns
     assert len(df) == 2
+
+
+def test_load_zip_counts_accepts_metric_columns(tmp_path):
+    """New metric columns (prevalence, mortality) are optional and preserved."""
+    p = tmp_path / "with_metrics.csv"
+    p.write_text(
+        "eps_zip,zip4,patients,cancer_prevalence_numerator,all_cause_deaths,cancer_deaths\n"
+        "06103,1234,100,15,2,1\n"
+        "10001,5555,50,8,1,0\n"
+    )
+    df = load_zip_counts(p)
+    assert "cancer_prevalence_numerator" in df.columns
+    assert "all_cause_deaths" in df.columns
+    assert "cancer_deaths" in df.columns
+    assert df["cancer_prevalence_numerator"].tolist() == [15, 8]
+    assert df["all_cause_deaths"].tolist() == [2, 1]
+    assert df["cancer_deaths"].tolist() == [1, 0]
+
+
+def test_load_zip_counts_metric_columns_are_numeric(tmp_path):
+    """Metric columns must be coerced to appropriate numeric types."""
+    p = tmp_path / "with_metrics.csv"
+    p.write_text(
+        "eps_zip,zip4,patients,cancer_prevalence_numerator,all_cause_deaths,cancer_deaths\n"
+        "06103,1234,100,15,2,1\n"
+    )
+    df = load_zip_counts(p)
+    assert df["cancer_prevalence_numerator"].dtype in ["int64", "Int64"]
+    assert df["all_cause_deaths"].dtype in ["int64", "Int64"]
+    assert df["cancer_deaths"].dtype in ["int64", "Int64"]
+
+
+def test_load_zip_counts_works_without_metric_columns(tmp_path):
+    """CSVs without new metric columns still work (backward compatibility)."""
+    p = tmp_path / "old_format.csv"
+    p.write_text("eps_zip,zip4,patients\n06103,1234,7\n")
+    df = load_zip_counts(p)
+    assert "cancer_prevalence_numerator" not in df.columns
+    assert "all_cause_deaths" not in df.columns
+    assert "cancer_deaths" not in df.columns
+    assert len(df) == 1

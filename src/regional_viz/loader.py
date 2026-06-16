@@ -14,6 +14,11 @@ from typing import Iterable
 import pandas as pd
 
 REQUIRED_COLUMNS: tuple[str, ...] = ("eps_zip", "patients")
+OPTIONAL_METRIC_COLUMNS: tuple[str, ...] = (
+    "cancer_prevalence_numerator",
+    "all_cause_deaths",
+    "cancer_deaths",
+)
 
 
 class SchemaError(ValueError):
@@ -40,9 +45,20 @@ def load_zip_counts(
     Optional columns:
       * `zip4_cluster_group` — cluster assignment for ZIP+4 combinations.
         If present, can be used for filtering in the dashboard.
+      * `cancer_prevalence_numerator` — count of patients with cancer history.
+      * `all_cause_deaths` — total deaths in the time period.
+      * `cancer_deaths` — cancer-attributed deaths (e.g., 12-month window).
+
+    When present, metric columns are coerced to integers.
     """
     df = pd.read_csv(path, dtype={zip_col: str})
     validate_schema(df, required=(zip_col, count_col))
     df[zip_col] = df[zip_col].str.zfill(5)
     df[count_col] = df[count_col].astype(int)
+
+    # Coerce optional metric columns to int if present
+    for col in OPTIONAL_METRIC_COLUMNS:
+        if col in df.columns:
+            df[col] = df[col].astype(int)
+
     return df

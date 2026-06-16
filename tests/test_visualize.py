@@ -104,7 +104,7 @@ def test_distribution_histogram_and_quantiles():
     )
     fig = distribution_histogram(df, bins=5, min_patients=8)
     assert fig.data[0].type == "bar"
-    assert fig.layout.title.text == "Patient count distribution across counties"
+    assert fig.layout.title.text == "Patients distribution across counties"
     assert fig.layout.xaxis.title.text == "Patients per county (log buckets)"
 
     quantiles = distribution_quantiles(df, quantiles=(0.5, 0.9))
