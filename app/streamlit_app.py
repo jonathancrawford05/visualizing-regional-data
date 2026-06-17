@@ -18,7 +18,7 @@ from urllib.request import urlopen
 import pandas as pd
 import streamlit as st
 
-from regional_viz.aggregate import aggregate_to_county
+from regional_viz.aggregate import aggregate_to_county, aggregate_metrics_to_county
 from regional_viz.loader import load_zip_counts
 from regional_viz.synthetic import generate_synthetic_zip4, seed_dominant_county_map
 from regional_viz.visualize import (
@@ -84,6 +84,30 @@ def main() -> None:
             "distribution charts, and summary metrics.",
             icon="ℹ️",
         )
+
+        # Metric selection (if multi-metric data is available)
+        metric_options = {"Patient counts": "patients"}
+        has_prevalence = "cancer_prevalence_numerator" in df.columns
+        has_all_cause = "all_cause_deaths" in df.columns
+        has_cancer_mort = "cancer_deaths" in df.columns
+
+        if has_prevalence:
+            metric_options["Cancer prevalence (%)"] = "cancer_prevalence_pct"
+        if has_all_cause:
+            metric_options["All-cause mortality (per 100k)"] = "all_cause_mortality_per_100k"
+        if has_cancer_mort:
+            metric_options["Cancer-attributed mortality (per 100k)"] = "cancer_mortality_per_100k"
+
+        selected_metric_label = st.radio(
+            "Metric to display",
+            options=list(metric_options.keys()),
+            index=0,
+            help=(
+                "Select which metric to visualize on the map and charts. "
+                "Only metrics with data in the uploaded CSV are available."
+            ),
+        )
+        selected_metric = metric_options[selected_metric_label]
 
         # ZIP+4 cluster group filter (optional column)
         selected_cluster_groups = None
@@ -164,10 +188,16 @@ def main() -> None:
         df_filtered = df_filtered[df_filtered["zip4_cluster_group"].isin(selected_cluster_groups)]
 
     # ---- Aggregate ---------------------------------------------------------
-    county_df_full, coverage = aggregate_to_county(df_filtered, zip2fips)
+    # Use multi-metric aggregation if any metric columns are present
+    use_multi_metric = has_prevalence or has_all_cause or has_cancer_mort
+    if use_multi_metric:
+        county_df_full, coverage = aggregate_metrics_to_county(df_filtered, zip2fips)
+    else:
+        county_df_full, coverage = aggregate_to_county(df_filtered, zip2fips)
 
     # Apply global percentile filter to all downstream components
-    county_df = filter_county_df_by_percentile(county_df_full, min_percentile)
+    # Filter on patient counts regardless of selected metric (population-based filter)
+    county_df = filter_county_df_by_percentile(county_df_full, min_percentile, metric_col="patients")
 
     # ---- Metrics -----------------------------------------------------------
     c1, c2, c3, c4 = st.columns(4)
@@ -201,17 +231,31 @@ def main() -> None:
     if county_df.empty:
         st.warning("No counties remain after applying the current filter. Lower the percentile to see data.")
     else:
-        range_max = float(county_df["patients"].quantile(clip_q)) or 1.0
+        # Determine metric-specific formatting
+        if selected_metric == "patients":
+            metric_label = "Individuals"
+            hover_format = ":,"
+        elif selected_metric == "cancer_prevalence_pct":
+            metric_label = "Cancer Prevalence (%)"
+            hover_format = ":.2f"
+        elif selected_metric in ["all_cause_mortality_per_100k", "cancer_mortality_per_100k"]:
+            metric_label = selected_metric_label
+            hover_format = ":.1f"
+        else:
+            metric_label = selected_metric_label
+            hover_format = ":,"
+
+        range_max = float(county_df[selected_metric].quantile(clip_q)) or 1.0
         map_fig = px.choropleth(
             county_df,
             geojson=geo,
             locations="fips",
-            color="patients",
+            color=selected_metric,
             color_continuous_scale="Viridis",
             range_color=(0, range_max),
             scope="usa",
-            labels={"patients": "Individuals"},
-            hover_data={"fips": True, "patients": ":,"},
+            labels={selected_metric: metric_label},
+            hover_data={"fips": True, selected_metric: hover_format},
         )
         map_fig.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=600)
         st.plotly_chart(map_fig, use_container_width=True)
@@ -230,29 +274,39 @@ def main() -> None:
             distribution_quantiles,
         )
 
-        with st.expander("Patient distribution by county"):
+        with st.expander(f"{selected_metric_label} distribution by county"):
             bar_fig = distribution_figure(
                 county_df,
+                metric_col=selected_metric,
+                metric_label=metric_label,
                 top_n=distribution_top_n,
                 county_names=county_names,
             )
             st.plotly_chart(bar_fig, use_container_width=True)
 
-            histogram = distribution_histogram(county_df)
+            histogram = distribution_histogram(
+                county_df,
+                metric_col=selected_metric,
+                metric_label=metric_label,
+            )
             st.plotly_chart(histogram, use_container_width=True)
 
             st.write(
-                "**Distribution quantiles** — patient-count percentiles across filtered counties."
+                f"**Distribution quantiles** — {metric_label.lower()} percentiles across filtered counties."
             )
-            st.dataframe(distribution_quantiles(county_df), use_container_width=True)
+            st.dataframe(
+                distribution_quantiles(county_df, metric_col=selected_metric),
+                use_container_width=True
+            )
 
     except Exception:
         from regional_viz.visualize import distribution_data
 
-        with st.expander("Patient distribution by county"):
+        with st.expander(f"{selected_metric_label} distribution by county"):
             st.dataframe(
                 distribution_data(
                     county_df,
+                    metric_col=selected_metric,
                     top_n=distribution_top_n,
                     county_names=county_names,
                 ).head(200),

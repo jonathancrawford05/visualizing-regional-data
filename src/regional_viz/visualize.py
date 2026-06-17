@@ -158,36 +158,41 @@ def fips_to_county_name(geojson: dict) -> dict[str, tuple[str, str]]:
 def filter_county_df_by_percentile(
     county_df: pd.DataFrame,
     min_percentile: float,
+    metric_col: str = "patients",
 ) -> pd.DataFrame:
-    """Return counties whose patient count is at or above *min_percentile*.
+    """Return counties whose metric value is at or above *min_percentile*.
 
     *min_percentile* is a fraction in [0.0, 1.0].  0.0 returns all rows
     unchanged; 1.0 returns only counties at or above the maximum value.
+    *metric_col* specifies which column to filter on (default: "patients").
     """
     if min_percentile <= 0.0:
         return county_df
-    threshold = float(county_df["patients"].quantile(min_percentile))
-    return county_df[county_df["patients"] >= threshold].reset_index(drop=True)
+    threshold = float(county_df[metric_col].quantile(min_percentile))
+    return county_df[county_df[metric_col] >= threshold].reset_index(drop=True)
 
 
 def distribution_data(
     county_df: pd.DataFrame,
     *,
+    metric_col: str = "patients",
     top_n: int | None = None,
     min_patients: float | None = None,
     county_names: dict[str, tuple[str, str]] | None = None,
 ) -> pd.DataFrame:
-    """Return a DataFrame summarizing patient counts by FIPS, sorted desc.
+    """Return a DataFrame summarizing metric values by FIPS, sorted desc.
 
-    If *min_patients* is provided, filter out counties below that threshold.
-    If *top_n* is provided, return only the top N rows by ``patients``.
+    *metric_col* specifies which column to display (default: "patients").
+    If *min_patients* is provided, filter out counties below that threshold
+    (threshold is applied to the metric column).
+    If *top_n* is provided, return only the top N rows by the metric.
     If *county_names* is provided (mapping FIPS → (name, state_abbr)),
     ``county`` and ``state`` columns are added to the output.
     """
-    df = county_df[["fips", "patients"]].groupby("fips", as_index=False).sum()
-    df = df.sort_values("patients", ascending=False).reset_index(drop=True)
+    df = county_df[["fips", metric_col]].groupby("fips", as_index=False).sum()
+    df = df.sort_values(metric_col, ascending=False).reset_index(drop=True)
     if min_patients is not None:
-        df = df[df["patients"] >= min_patients].reset_index(drop=True)
+        df = df[df[metric_col] >= min_patients].reset_index(drop=True)
     if county_names is not None:
         df["county"] = df["fips"].map(lambda f: county_names.get(f, ("", ""))[0])
         df["state"] = df["fips"].map(lambda f: county_names.get(f, ("", ""))[1])
@@ -199,12 +204,16 @@ def distribution_data(
 def distribution_figure(
     county_df: pd.DataFrame,
     *,
+    metric_col: str = "patients",
+    metric_label: str = "Individuals",
     top_n: int | None = 100,
     min_patients: float | None = None,
     county_names: dict[str, tuple[str, str]] | None = None,
 ):
-    """Create a Plotly bar figure showing patients by FIPS.
+    """Create a Plotly bar figure showing metric values by FIPS.
 
+    *metric_col* specifies which column to display (default: "patients").
+    *metric_label* is used for axis labels and chart title.
     Requires ``plotly`` (optional). Returns a Plotly ``Figure``.
     When *county_names* is provided, x-axis labels show "County, ST" instead
     of raw FIPS codes.
@@ -212,7 +221,8 @@ def distribution_figure(
     import plotly.express as px
 
     df = distribution_data(
-        county_df, top_n=top_n, min_patients=min_patients, county_names=county_names
+        county_df, metric_col=metric_col, top_n=top_n,
+        min_patients=min_patients, county_names=county_names
     )
     if county_names is not None and "county" in df.columns:
         df = df.copy()
@@ -223,10 +233,10 @@ def distribution_figure(
         x_col = "fips"
         xaxis_title = "FIPS"
 
-    fig = px.bar(df, x=x_col, y="patients", labels={"patients": "Individuals"})
-    subtitle = "Top counties by patients"
+    fig = px.bar(df, x=x_col, y=metric_col, labels={metric_col: metric_label})
+    subtitle = f"Top counties by {metric_label.lower()}"
     if min_patients is not None:
-        subtitle = f"Counties with ≥ {min_patients:.0f} patients"
+        subtitle = f"Counties with ≥ {min_patients:.0f} {metric_label.lower()}"
     fig.update_layout(title_text=subtitle, xaxis_title=xaxis_title)
     return fig
 
@@ -234,18 +244,22 @@ def distribution_figure(
 def distribution_histogram(
     county_df: pd.DataFrame,
     *,
+    metric_col: str = "patients",
+    metric_label: str = "Patients",
     bins: int = 40,
     min_patients: float | None = None,
 ) -> "plotly.graph_objs._figure.Figure":
-    """Create a Plotly histogram of county patient counts.
+    """Create a Plotly histogram of county metric values.
 
-    This uses explicit log-space binning so skewed patient distributions
-    remain visible as bars even when counts span many orders of magnitude.
+    *metric_col* specifies which column to histogram (default: "patients").
+    *metric_label* is used for axis labels and chart title.
+    This uses explicit log-space binning so skewed distributions
+    remain visible as bars even when values span many orders of magnitude.
     If `min_patients` is provided, counties below the threshold are omitted.
     """
     import plotly.express as px
 
-    values = county_df["patients"].astype(float)
+    values = county_df[metric_col].astype(float)
     if min_patients is not None:
         values = values[values >= min_patients]
     values = values[values > 0]
@@ -253,30 +267,35 @@ def distribution_histogram(
         empty_df = pd.DataFrame({"bin": [], "counties": []})
         fig = px.bar(empty_df, x="bin", y="counties")
         fig.update_layout(
-            title_text="Patient count distribution across counties",
-            xaxis_title="Patients per county",
+            title_text=f"{metric_label} distribution across counties",
+            xaxis_title=f"{metric_label} per county",
             yaxis_title="Number of counties",
         )
         return fig
 
-    min_val = max(values.min(), 1.0)
+    min_val = max(values.min(), 1.0 if metric_col == "patients" else 0.01)
     max_val = values.max()
     bin_edges = np.logspace(np.log10(min_val), np.log10(max_val), bins + 1)
     counts, edges = np.histogram(values, bins=bin_edges)
-    labels = [
-        f"{int(edges[i]):,}–{int(edges[i + 1] - 1):,}"
-        for i in range(len(counts))
-    ]
+
+    # Format labels based on metric type
+    if "pct" in metric_col:
+        labels = [f"{edges[i]:.1f}–{edges[i + 1]:.1f}%" for i in range(len(counts))]
+    elif "per_100k" in metric_col:
+        labels = [f"{int(edges[i]):,}–{int(edges[i + 1]):,}" for i in range(len(counts))]
+    else:
+        labels = [f"{int(edges[i]):,}–{int(edges[i + 1] - 1):,}" for i in range(len(counts))]
+
     hist_df = pd.DataFrame({"bin": labels, "counties": counts})
     fig = px.bar(
         hist_df,
         x="bin",
         y="counties",
-        labels={"bin": "Patients per county", "counties": "Number of counties"},
+        labels={"bin": f"{metric_label} per county", "counties": "Number of counties"},
     )
     fig.update_layout(
-        title_text="Patient count distribution across counties",
-        xaxis_title="Patients per county (log buckets)",
+        title_text=f"{metric_label} distribution across counties",
+        xaxis_title=f"{metric_label} per county (log buckets)",
         yaxis_title="Number of counties",
     )
     return fig
@@ -285,13 +304,15 @@ def distribution_histogram(
 def distribution_quantiles(
     county_df: pd.DataFrame,
     *,
+    metric_col: str = "patients",
     quantiles: list[float] | tuple[float, ...] = (0.25, 0.50, 0.75, 0.90, 0.99),
 ) -> pd.DataFrame:
-    """Return a DataFrame with selected patient-count quantiles.
+    """Return a DataFrame with selected metric quantiles.
 
+    *metric_col* specifies which column to compute quantiles for (default: "patients").
     This is useful for showing actual percentiles a user selected.
     """
-    values = county_df["patients"].quantile(quantiles).reset_index()
-    values.columns = ["quantile", "patients"]
+    values = county_df[metric_col].quantile(quantiles).reset_index()
+    values.columns = ["quantile", metric_col]
     values["quantile"] = (values["quantile"] * 100).astype(int)
     return values
