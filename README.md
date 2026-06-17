@@ -21,15 +21,17 @@ loop so we can iterate on three open questions before locking the design:
 | `src/regional_viz/loader.py`      | Schema-validating CSV loader. Preserves leading-zero ZIPs.       |
 | `src/regional_viz/crosswalk.py`   | Public ZIP→dominant-FIPS map + HUD allocation-ratio loader.      |
 | `src/regional_viz/aggregate.py`   | Sum-preserving rollup with coverage reporting + multi-metric aggregation. |
+| `src/regional_viz/cluster.py`     | Cluster-comparison transforms: per-cluster units, credibility weighting, IQR censoring. |
 | `src/regional_viz/synthetic.py`   | Deterministic dummy data with all-50-states geographic coverage. |
 | `src/regional_viz/visualize.py`   | Plotly (interactive HTML) and GeoPandas (Albers PNG) renderers.  |
-| `tests/`                          | 57 pytest cases — all offline, all <1s.                          |
-| `app/streamlit_app.py`            | Interactive demo dashboard for stakeholder iteration.            |
+| `tests/`                          | 84 pytest cases — all offline, all <2s.                          |
+| `app/streamlit_app.py`            | Interactive demo dashboard (County map + Cluster comparison tabs). |
 | `scripts/generate_demo_data.py`   | CLI to write a synthetic ZIP+4 CSV.                              |
 | `scripts/export_multi_metric_data.sql` | Databricks SQL to export multi-metric data.                |
 | `docs/quickstart.md`              | 60-second run guide.                                             |
 | `docs/design-decisions.md`        | Why this stack, this crosswalk, this projection.                 |
 | `docs/multi-metric-feature-plan.md` | Implementation plan for multi-metric support.                 |
+| `docs/cluster-comparison-feature.md` | Cluster tab: credibility weighting + IQR censoring.          |
 
 ## Quick start
 
@@ -110,6 +112,23 @@ eps_zip,zip4,zip4_cluster_group,patients,cancer_prevalence_numerator,all_cause_d
 
 See [`docs/multi-metric-feature-plan.md`](docs/multi-metric-feature-plan.md) for implementation details and [`scripts/export_multi_metric_data.sql`](scripts/export_multi_metric_data.sql) for the Databricks SQL query to generate input data.
 
+## Cluster Comparison
+
+The **Cluster comparison** tab compares a metric's distribution across the
+ZIP+4 cluster groups (15 in production). Each cluster is a box or violin; the
+points are its ZIP or ZIP+4 units.
+
+- **Aggregation level:** ZIP (smoother) or ZIP+4 (granular).
+- **Credibility weighting:** each unit is shrunk toward its cluster's expected
+  value — `Z·observed + (1−Z)·expected` — with `Z` driven by the unit's
+  numerator (deaths / cancer claimants). Three methods: square-root (limited
+  fluctuation, default), linear, and Bühlmann `n/(n+k)`. A slider sets the
+  threshold. This tames noisy small ZIP+4 cells.
+- **IQR censoring:** an optional cap at `Q3 + k·IQR` (k defaults to 3.5)
+  clips the long tail while keeping censored points visible at the cap.
+
+See [`docs/cluster-comparison-feature.md`](docs/cluster-comparison-feature.md) for the full design.
+
 ## TDD posture
 
 Every module has tests that assert the *behavioral contract* a caller
@@ -123,6 +142,9 @@ relies on, not the implementation:
 - Synthetic tests pin schema parity, reproducibility, geographic spread,
   and the heavy-tail count distribution — so the demo can't silently
   degenerate into a single-state map.
+- Cluster tests pin the credibility blend (`Z·observed + (1−Z)·expected`
+  with hand-computed Z), the three Z formulas, per-cluster expected values,
+  and the `Q3 + k·IQR` censoring fence.
 
 The intended development loop is to add a failing test for any new
 behavior (a new crosswalk, a new binning scheme, a new diagnostic), make
