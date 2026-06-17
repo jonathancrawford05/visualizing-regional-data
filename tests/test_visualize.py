@@ -30,6 +30,13 @@ def test_cluster_distribution_figure_box():
     assert fig.layout.yaxis.title.text == "Value"
 
 
+def test_cluster_distribution_figure_sets_explicit_height():
+    """Charts in st.tabs collapse without an explicit height — pin it."""
+    fig = cluster_distribution_figure(_cluster_units(), plot_type="box")
+    assert fig.layout.height is not None
+    assert fig.layout.height > 0
+
+
 def test_cluster_distribution_figure_violin():
     fig = cluster_distribution_figure(
         _cluster_units(), plot_type="violin", metric_label="Mortality"

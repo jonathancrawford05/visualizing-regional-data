@@ -309,6 +309,7 @@ def cluster_distribution_figure(
     plot_type: str = "box",
     metric_label: str = "Value",
     cap: float | None = None,
+    height: int = 520,
 ):
     """Box or violin distribution of per-unit values, one group per cluster.
 
@@ -318,7 +319,10 @@ def cluster_distribution_figure(
     visible. When *cap* is given, a dashed reference line marks the censoring
     threshold.
 
-    *plot_type* is ``"box"`` or ``"violin"``. Requires ``plotly`` (optional).
+    *plot_type* is ``"box"`` or ``"violin"``. An explicit *height* is set so
+    the chart still lays out correctly when rendered inside ``st.tabs`` (a
+    Plotly-in-tab container reports zero size on first paint, which collapses
+    a height-less chart to nothing). Requires ``plotly`` (optional).
     """
     import plotly.express as px
 
@@ -347,6 +351,7 @@ def cluster_distribution_figure(
         title_text=f"{metric_label} by cluster",
         xaxis_title="Cluster",
         yaxis_title=metric_label,
+        height=height,
     )
     return fig
 
