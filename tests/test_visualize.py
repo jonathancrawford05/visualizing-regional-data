@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from regional_viz.visualize import (
+    cluster_distribution_figure,
     distribution_data,
     distribution_figure,
     distribution_histogram,
@@ -11,6 +12,50 @@ from regional_viz.visualize import (
     filter_county_df_by_percentile,
     fips_to_county_name,
 )
+
+
+def _cluster_units() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "cluster": ["A", "A", "B", "B", "B"],
+            "unit": ["u1", "u2", "u3", "u4", "u5"],
+            "cred_value": [10.0, 12.0, 30.0, 31.0, 95.0],
+        }
+    )
+
+
+def test_cluster_distribution_figure_box():
+    fig = cluster_distribution_figure(_cluster_units(), plot_type="box")
+    assert fig.data[0].type == "box"
+    assert fig.layout.yaxis.title.text == "Value"
+
+
+def test_cluster_distribution_figure_sets_explicit_height():
+    """Charts in st.tabs collapse without an explicit height — pin it."""
+    fig = cluster_distribution_figure(_cluster_units(), plot_type="box")
+    assert fig.layout.height is not None
+    assert fig.layout.height > 0
+
+
+def test_cluster_distribution_figure_violin():
+    fig = cluster_distribution_figure(
+        _cluster_units(), plot_type="violin", metric_label="Mortality"
+    )
+    assert fig.data[0].type == "violin"
+    assert fig.layout.title.text == "Mortality by cluster"
+
+
+def test_cluster_distribution_figure_draws_cap_line():
+    fig = cluster_distribution_figure(_cluster_units(), plot_type="box", cap=40.0)
+    # The cap is rendered as a horizontal line shape on the layout.
+    assert any(
+        getattr(shape, "y0", None) == 40.0 for shape in fig.layout.shapes
+    )
+
+
+def test_cluster_distribution_figure_rejects_bad_plot_type():
+    with pytest.raises(ValueError):
+        cluster_distribution_figure(_cluster_units(), plot_type="scatter")
 
 
 def test_distribution_data_sorts_and_limits():

@@ -59,6 +59,45 @@ def test_count_distribution_is_skewed():
     assert share > 0.4
 
 
+def test_default_schema_has_no_cluster_or_metric_columns():
+    """Opt-in extensions must not leak into the default 3-column schema."""
+    df = generate_synthetic_zip4(n_rows=100, seed=0)
+    assert list(df.columns) == ["eps_zip", "zip4", "patients"]
+
+
+def test_synthetic_with_clusters_assigns_requested_count():
+    df = generate_synthetic_zip4(n_rows=3000, seed=5, n_clusters=15)
+    assert "zip4_cluster_group" in df.columns
+    # A 3k-row draw across 15 clusters should light all of them.
+    assert df["zip4_cluster_group"].nunique() == 15
+
+
+def test_synthetic_with_metrics_are_bounded_counts():
+    df = generate_synthetic_zip4(n_rows=2000, seed=5, n_clusters=15, with_metrics=True)
+    for col in ("cancer_prevalence_numerator", "all_cause_deaths", "cancer_deaths"):
+        assert col in df.columns
+        assert np.issubdtype(df[col].dtype, np.integer)
+        assert (df[col] >= 0).all()
+        # A count numerator can never exceed the patient denominator.
+        assert (df[col] <= df["patients"]).all()
+    # Cancer deaths are a subset of all-cause deaths.
+    assert (df["cancer_deaths"] <= df["all_cause_deaths"]).all()
+
+
+def test_synthetic_metrics_reproducible_with_seed():
+    a = generate_synthetic_zip4(n_rows=500, seed=9, n_clusters=15, with_metrics=True)
+    b = generate_synthetic_zip4(n_rows=500, seed=9, n_clusters=15, with_metrics=True)
+    pd.testing.assert_frame_equal(a, b)
+
+
+def test_metrics_require_clusters():
+    """with_metrics without clusters is a misuse — fail loudly."""
+    import pytest
+
+    with pytest.raises(ValueError):
+        generate_synthetic_zip4(n_rows=100, seed=0, with_metrics=True)
+
+
 def test_seed_dominant_county_map_round_trips():
     mapping = seed_dominant_county_map()
     assert len(mapping) == len(SEED_ZIPS)

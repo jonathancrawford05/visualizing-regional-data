@@ -301,6 +301,61 @@ def distribution_histogram(
     return fig
 
 
+def cluster_distribution_figure(
+    units: pd.DataFrame,
+    *,
+    value_col: str = "cred_value",
+    cluster_col: str = "cluster",
+    plot_type: str = "box",
+    metric_label: str = "Value",
+    cap: float | None = None,
+    height: int = 520,
+):
+    """Box or violin distribution of per-unit values, one group per cluster.
+
+    *units* is the long frame from :func:`cluster.aggregate_to_cluster_units`
+    (typically after credibility weighting and capping). Each cluster becomes
+    one box/violin; outlier points are drawn explicitly so ZIP+4 tails stay
+    visible. When *cap* is given, a dashed reference line marks the censoring
+    threshold.
+
+    *plot_type* is ``"box"`` or ``"violin"``. An explicit *height* is set so
+    the chart still lays out correctly when rendered inside ``st.tabs`` (a
+    Plotly-in-tab container reports zero size on first paint, which collapses
+    a height-less chart to nothing). Requires ``plotly`` (optional).
+    """
+    import plotly.express as px
+
+    if plot_type not in ("box", "violin"):
+        raise ValueError(f"plot_type must be 'box' or 'violin', got {plot_type!r}")
+
+    df = units.sort_values(cluster_col)
+    labels = {value_col: metric_label, cluster_col: "Cluster"}
+    if plot_type == "box":
+        fig = px.box(df, x=cluster_col, y=value_col, points="outliers", labels=labels)
+    else:
+        fig = px.violin(
+            df, x=cluster_col, y=value_col, box=True, points="outliers", labels=labels
+        )
+
+    if cap is not None and np.isfinite(cap):
+        fig.add_hline(
+            y=cap,
+            line_dash="dash",
+            line_color="firebrick",
+            annotation_text=f"cap = {cap:,.1f}",
+            annotation_position="top left",
+        )
+
+    fig.update_layout(
+        title_text=f"{metric_label} by cluster",
+        xaxis_title="Cluster",
+        yaxis_title=metric_label,
+        height=height,
+    )
+    return fig
+
+
 def distribution_quantiles(
     county_df: pd.DataFrame,
     *,
