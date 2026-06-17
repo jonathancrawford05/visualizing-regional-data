@@ -60,8 +60,84 @@ def load_public_zip2fips() -> dict[str, str]:
     return load_zip2fips_dominant()
 
 
+# ---------------------------------------------------------------------------
+# Cached data path (perf plan, component A)
+#
+# Streamlit reruns the whole script on every widget interaction. Without
+# caching, each slider nudge re-parses the upload *and* re-runs aggregation.
+# These wrappers pay the ingest + groupby cost once, keyed on the data's
+# identity (a stable ``file_id``) plus the few inputs the heavy step actually
+# depends on. Big payloads are passed as ``_``-prefixed args so Streamlit does
+# not hash them; the cheap, stable key lives in the non-underscore args.
+# ---------------------------------------------------------------------------
+
+
+@st.cache_data(show_spinner="Generating synthetic data…")
+def get_synthetic_df(
+    n_rows: int, seed: int, n_clusters: int, with_metrics: bool
+) -> pd.DataFrame:
+    """Cache synthetic generation so re-runs don't regenerate the frame."""
+    return generate_synthetic_zip4(
+        n_rows=n_rows, seed=seed, n_clusters=n_clusters, with_metrics=with_metrics
+    )
+
+
+@st.cache_data(show_spinner="Parsing upload…")
+def parse_upload(file_id: str, _raw: bytes) -> pd.DataFrame:
+    """Parse an uploaded CSV once per upload identity.
+
+    ``_raw`` is underscore-prefixed so Streamlit does not hash the (up to
+    512 MB) payload; the cache key is the upload's stable ``file_id``.
+    Leaner, dtype-tuned ingest is deferred to component C of the perf plan.
+    """
+    raw = pd.read_csv(io.BytesIO(_raw), dtype={"eps_zip": str})
+    raw["eps_zip"] = raw["eps_zip"].str.zfill(5)
+    raw["patients"] = raw["patients"].astype(int)
+    return raw
+
+
+@st.cache_data(show_spinner="Aggregating to county…")
+def cached_aggregate_to_county(
+    file_id: str,
+    cluster_groups_key: tuple,
+    use_multi_metric: bool,
+    _df: pd.DataFrame,
+    _zip2fips,
+):
+    """Cache the county rollup keyed on data identity + cluster filter + mode.
+
+    The heavy groupby depends only on the (cluster-filtered) input and which
+    rollup is used; the global percentile filter is applied cheaply *after*
+    this call, so moving that slider does not re-aggregate.
+    """
+    if use_multi_metric:
+        return aggregate_metrics_to_county(_df, _zip2fips)
+    return aggregate_to_county(_df, _zip2fips)
+
+
+@st.cache_data(show_spinner="Aggregating cluster units…")
+def cached_aggregate_to_cluster_units(
+    file_id: str, level: str, metric_key: str, _df: pd.DataFrame
+) -> pd.DataFrame:
+    """Cache the per-unit cluster rollup keyed on data + level + metric.
+
+    Aggregates over *all* clusters; credibility weighting, IQR capping and
+    cluster selection are cheap post-processing applied after this cached
+    result, so nudging those widgets does not trigger the heavy groupby.
+    """
+    spec = CLUSTER_METRIC_SPECS[metric_key]
+    return aggregate_to_cluster_units(
+        _df,
+        level=level,
+        numerator_col=spec.numerator_col,
+        denominator_col=spec.denominator_col,
+        multiplier=spec.multiplier,
+    )
+
+
 def render_county_tab(
     *,
+    file_id: str,
     df: pd.DataFrame,
     df_filtered: pd.DataFrame,
     zip2fips: dict[str, str],
@@ -74,10 +150,16 @@ def render_county_tab(
     use_multi_metric: bool,
 ) -> None:
     """The original choropleth view: aggregate to county, map, distributions."""
-    if use_multi_metric:
-        county_df_full, coverage = aggregate_metrics_to_county(df_filtered, zip2fips)
-    else:
-        county_df_full, coverage = aggregate_to_county(df_filtered, zip2fips)
+    cluster_groups_key = (
+        tuple(sorted(selected_cluster_groups)) if selected_cluster_groups else ()
+    )
+    county_df_full, coverage = cached_aggregate_to_county(
+        file_id,
+        cluster_groups_key,
+        use_multi_metric,
+        df_filtered,
+        zip2fips,
+    )
 
     # Global percentile filter is population-based: always on patient counts.
     county_df = filter_county_df_by_percentile(
@@ -212,7 +294,7 @@ def render_county_tab(
         )
 
 
-def render_cluster_tab(df: pd.DataFrame) -> None:
+def render_cluster_tab(df: pd.DataFrame, *, file_id: str) -> None:
     """Compare a metric's distribution across ZIP+4 cluster groups.
 
     Each cluster is one box/violin; the points within it are its ZIP or
@@ -308,14 +390,13 @@ def render_cluster_tab(df: pd.DataFrame) -> None:
         st.warning("Select at least one cluster to compare.")
         return
 
-    sub = df[df["zip4_cluster_group"].isin(selected)]
-    units = aggregate_to_cluster_units(
-        sub,
-        level=level,
-        numerator_col=spec.numerator_col,
-        denominator_col=spec.denominator_col,
-        multiplier=spec.multiplier,
-    )
+    # Aggregate over *all* clusters once (cached on data + level + metric),
+    # then filter to the selected clusters. Per-cluster ``expected`` is
+    # computed independently per cluster, so filtering after aggregation is
+    # equivalent to filtering before — but lets the heavy groupby be reused
+    # when the cluster selection changes.
+    units_full = cached_aggregate_to_cluster_units(file_id, level, spec.key, df)
+    units = units_full[units_full["cluster"].isin(selected)]
     units = apply_credibility(units, threshold=threshold, method=method)
 
     cap = None
@@ -371,9 +452,12 @@ def main() -> None:
         if source == "Synthetic (dummy)":
             n_rows = st.slider("rows", 1_000, 50_000, 10_000, step=1_000)
             seed = st.number_input("seed", 0, 10_000, 42)
-            df = generate_synthetic_zip4(
-                n_rows=n_rows, seed=int(seed), n_clusters=15, with_metrics=True
+            n_clusters = 15
+            df = get_synthetic_df(
+                n_rows=n_rows, seed=int(seed), n_clusters=n_clusters, with_metrics=True
             )
+            # Stable identity for the cache: same params ⇒ same frame.
+            file_id = f"synthetic:{n_rows}:{int(seed)}:{n_clusters}:metrics"
             zip2fips = seed_dominant_county_map()
             st.success(f"Generated {len(df):,} synthetic ZIP+4 rows (15 clusters).")
         else:
@@ -384,10 +468,10 @@ def main() -> None:
             )
             if up is None:
                 st.stop()
-            raw = pd.read_csv(io.BytesIO(up.getvalue()), dtype={"eps_zip": str})
-            raw["eps_zip"] = raw["eps_zip"].str.zfill(5)
-            raw["patients"] = raw["patients"].astype(int)
-            df = raw
+            # ``file_id`` is Streamlit's stable per-upload identity, so the
+            # parse (and downstream aggregation) is cached across reruns.
+            file_id = up.file_id
+            df = parse_upload(file_id, up.getvalue())
             with st.spinner("Loading public ZIP→FIPS crosswalk…"):
                 zip2fips = load_public_zip2fips()
 
@@ -508,6 +592,7 @@ def main() -> None:
 
     with tab_map:
         render_county_tab(
+            file_id=file_id,
             df=df,
             df_filtered=df_filtered,
             zip2fips=zip2fips,
@@ -523,7 +608,7 @@ def main() -> None:
     with tab_cluster:
         # Operates on the full loaded data with its own cluster multiselect,
         # independent of the County tab's sidebar cluster filter.
-        render_cluster_tab(df)
+        render_cluster_tab(df, file_id=file_id)
 
 
 if __name__ == "__main__":

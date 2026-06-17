@@ -1,9 +1,51 @@
 # Performance Enhancements for Large Inputs — Implementation Plan
 
-> **Status:** Planned (not yet implemented). This document is the hand-off
-> spec for a subsequent session. Implement on a **new feature branch** off
-> `main` (suggested name: `claude/cluster-perf-AxBxC`), TDD-first, mirroring
-> the existing module/test conventions.
+> **Status:** In progress — being delivered one component at a time so the
+> UX can be validated between steps.
+>
+> | Component | Status | Notes |
+> |-----------|--------|-------|
+> | **A. Cache the heavy steps** | ✅ Done | Shipped in branch `claude/ecstatic-pascal-fzji5x`. See **Progress log** below. |
+> | **B. Size-independent plotting** | ⬜ Not started | Next up. Fixes the ZIP+4 crash. |
+> | **C. Leaner ingest** | ⬜ Not started | pyarrow engine + compact dtypes. |
+>
+> Each component is its own session + review cycle. Mirror the existing
+> module/test conventions, TDD-first.
+
+## Progress log
+
+### Component A — Cache the heavy steps ✅ (2026-06-17)
+
+Implemented in `app/streamlit_app.py` (caching is Streamlit-specific, so the
+wrappers live in the app layer; the pure functions in `src/regional_viz/`
+are unchanged and still the single source of aggregation truth).
+
+- **A1 — cached upload parse:** `parse_upload(file_id, _raw)`. `file_id` is
+  Streamlit's stable `UploadedFile.file_id`; the bytes are passed as `_raw`
+  (hash-excluded). Synthetic generation is likewise cached via
+  `get_synthetic_df(n_rows, seed, n_clusters, with_metrics)` with a derived
+  `file_id = f"synthetic:{n_rows}:{seed}:{n_clusters}:metrics"`.
+- **A2 — cached county rollup:** `cached_aggregate_to_county(file_id,
+  cluster_groups_key, use_multi_metric, _df, _zip2fips)`. The global
+  **percentile filter is applied *after* this call**, so moving that slider
+  no longer re-aggregates.
+- **A3 — cached cluster rollup:** `cached_aggregate_to_cluster_units(file_id,
+  level, metric_key, _df)`. **Restructure:** aggregate over *all* clusters
+  once, then filter `units` to the selected clusters; credibility, capping
+  and cluster selection are cheap post-processing. Per-cluster `expected` is
+  computed independently per cluster, so filter-after ≡ filter-before
+  (covered by a test).
+- **Tests:** `tests/test_app_cache.py` loads the app module and asserts each
+  wrapper delegates faithfully (caching doesn't change results), the leading-
+  zero ZIP invariant survives `parse_upload`, and filter-after ≡ filter-before
+  for the cluster restructure. Verified end-to-end with Streamlit `AppTest`
+  (both tabs render, percentile change reruns clean, no exceptions). Full
+  suite: 90 passed.
+- **Deferred (still optional, see A3 note below):** caching
+  `apply_credibility` on `(file_id, level, metric_key, threshold, method)`.
+  Left out for now — the post-processing is cheap at current scale; revisit
+  if threshold/method changes feel sluggish on a real ≥5M-row file. The
+  bigger remaining win is **B** (the crash), which should come next.
 
 ## Motivation
 
