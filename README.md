@@ -32,6 +32,7 @@ loop so we can iterate on three open questions before locking the design:
 | `docs/design-decisions.md`        | Why this stack, this crosswalk, this projection.                 |
 | `docs/multi-metric-feature-plan.md` | Implementation plan for multi-metric support.                 |
 | `docs/cluster-comparison-feature.md` | Cluster tab: credibility weighting + IQR censoring.          |
+| `docs/performance-enhancements-plan.md` | Planned A+B+C work for large inputs (caching, scalable plots, ingest). |
 
 ## Quick start
 
